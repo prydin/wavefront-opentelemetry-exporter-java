@@ -1,0 +1,24 @@
+plugins {
+    id 'groovy'
+    id 'java'
+    id 'com.github.johnrengelman.shadow' version '5.2.0'
+}
+
+group 'com.wavefront'
+version '1.0-SNAPSHOT'
+
+sourceCompatibility = 1.8
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    compile 'com.wavefront:wavefront-sdk-java:1.15'
+    compileOnly 'io.opentelemetry:opentelemetry-sdk:0.2.0'
+    compileOnly 'io.opentelemetry:opentelemetry-api:0.2.0'
+    //compileOnly files('../opentelemetry-java/sdk/build/libs/opentelemetry-sdk-0.2.0.jar')
+    //compileOnly files('../opentelemetry-java/api/build/libs/opentelemetry-api-0.2.0.jar')
+    compile files('../opentelemetry-auto-instr-java/exporter-support/build/libs/exporter-support-0.1.0.jar')
+    testCompile group: 'junit', name: 'junit', version: '4.12'
+}
