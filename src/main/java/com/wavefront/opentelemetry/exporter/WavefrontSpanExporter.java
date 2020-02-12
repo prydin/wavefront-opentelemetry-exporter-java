@@ -86,7 +86,8 @@ public class WavefrontSpanExporter implements SpanExporter {
   @Override
   public ResultCode export(final List<SpanData> spans) {
     for (final SpanData span : spans) {
-      System.out.println("******** SPAN: " + span.getName() + " clientId: " + sender.getClientId());
+      logger.log(
+          Level.FINE, "******** SPAN: " + span.getName() + " clientId: " + sender.getClientId());
       final List<SpanLog> spanLogs = new ArrayList<>(spans.size());
       for (final SpanData.TimedEvent event : span.getTimedEvents()) {
         final Map<String, String> wfAttrs = new HashMap<>(event.getAttributes().size());
@@ -107,12 +108,11 @@ public class WavefrontSpanExporter implements SpanExporter {
             null, // TODO: Populate followsFrom
             attrsToTags(span.getAttributes()),
             spanLogs);
-        System.out.println("Survived sending spans!");
       } catch (final IOException e) {
-        e.printStackTrace();
+        logger.log(Level.WARNING, "Error while sending span", e);
         return ResultCode.FAILED_RETRYABLE;
       } catch (final Throwable t) {
-        t.printStackTrace();
+        logger.log(Level.WARNING, "Error while sending span", t);
       }
     }
     return ResultCode.SUCCESS;
