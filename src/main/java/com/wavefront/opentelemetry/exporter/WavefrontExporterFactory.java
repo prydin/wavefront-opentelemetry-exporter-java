@@ -4,6 +4,11 @@ import io.opentelemetry.auto.exportersupport.ConfigProvider;
 import io.opentelemetry.auto.exportersupport.ExporterFactory;
 import io.opentelemetry.sdk.trace.export.SpanExporter;
 
+/**
+ * Implements an {@link ExporterFactory} that is called from the Java Auto Instrumenter.
+ * Applications that are programmatically constructing a {@link WavefrontSpanExporter} should use
+ * the builder instead.
+ */
 public class WavefrontExporterFactory implements ExporterFactory {
   private final String PROXY = "wavefront.proxy";
   private final String WAVEFRONT_URL = "wavefront.url";
@@ -11,15 +16,23 @@ public class WavefrontExporterFactory implements ExporterFactory {
   private final String METRICSPORT = "wavefront.metricsport";
   private final String FLUSH_INTERVAL = "wavefront.flushinterval";
   private final String TOKEN = "wavefront.token";
+  private final String HOST = "wavefront.host";
   private final String APPLICAITION = "application";
   private final String SERVICE = "service";
 
+  /**
+   * Called from the Java Auto Instrumenter to create a new {@link WavefrontSpanExporter}
+   *
+   * @param config The configuration to use
+   * @return
+   */
   @Override
   public SpanExporter fromConfig(final ConfigProvider config) {
     WavefrontSpanExporter.Builder b = WavefrontSpanExporter.Builder.newBuilder();
     b =
         b.application(config.getString(APPLICAITION, "(unknown application)"))
-            .service(config.getString(SERVICE, "(unknown service)"));
+            .service(config.getString(SERVICE, "(unknown service)"))
+            .host(config.getString(HOST, null));
 
     final String proxy = config.getString(PROXY, null);
     final String url = config.getString(WAVEFRONT_URL, null);
