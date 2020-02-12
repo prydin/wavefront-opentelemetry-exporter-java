@@ -18,8 +18,8 @@ public class WavefrontExporterFactory implements ExporterFactory {
   public SpanExporter fromConfig(final ConfigProvider config) {
     WavefrontSpanExporter.Builder b = WavefrontSpanExporter.Builder.newBuilder();
     b =
-        b.application(config.getString(APPLICAITION, "(unknown service)"))
-            .service(config.getString(SERVICE, "(unknown application)"));
+        b.application(config.getString(APPLICAITION, "(unknown application)"))
+            .service(config.getString(SERVICE, "(unknown service)"));
 
     final String proxy = config.getString(PROXY, null);
     final String url = config.getString(WAVEFRONT_URL, null);
