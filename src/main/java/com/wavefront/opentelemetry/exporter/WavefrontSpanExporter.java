@@ -1,5 +1,6 @@
 package com.wavefront.opentelemetry.exporter;
 
+import com.google.common.annotations.VisibleForTesting;
 import com.wavefront.sdk.common.Pair;
 import com.wavefront.sdk.common.WavefrontSender;
 import com.wavefront.sdk.direct.ingestion.WavefrontDirectIngestionClient;
@@ -20,31 +21,43 @@ import java.util.logging.Logger;
 import javax.net.SocketFactory;
 
 public class WavefrontSpanExporter implements SpanExporter {
+  private static final int NUM_STD_TAGS = 2;
+
   private static final Logger logger =
       Logger.getLogger(WavefrontSpanExporter.class.getCanonicalName());
   private final WavefrontSender sender;
 
-  protected WavefrontSpanExporter(WavefrontSender sender) {
+  private final String application;
+
+  private final String service;
+
+  protected WavefrontSpanExporter(
+      final WavefrontSender sender, final String application, final String service) {
     this.sender = sender;
+    this.application = application;
+    this.service = service;
   }
 
-  private static UUID makeUUID(String s) {
-    if (s.length() >= 8) {
-      return new UUID(0, Long.parseLong(s, 16));
+  @VisibleForTesting
+  protected static long parseHex(final String s) {
+    final int l = s.length();
+    if (l > 16) {
+      throw new NumberFormatException("Too many characters in " + s);
     }
-    return new UUID(
-        Long.parseLong(s.substring(0, 8 - s.length()), 16), Long.parseLong(s.substring(8), 16));
-  }
-
-  private static List<Pair<String, String>> attrsToTags(Map<String, AttributeValue> attrs) {
-    List<Pair<String, String>> tags = new ArrayList<>(attrs.size());
-    for (Map.Entry<String, AttributeValue> attr : attrs.entrySet()) {
-      tags.add(new Pair<>(attr.getKey(), attrToString(attr.getValue())));
+    if (l == 16 && s.charAt(0) > '7') {
+      return (Long.parseLong(s.substring(0, 8), 16) << 32) | (Long.parseLong(s.substring(8), 16));
     }
-    return tags;
+    return Long.parseLong(s, 16);
   }
 
-  private static String attrToString(AttributeValue attr) {
+  private static UUID makeUUID(final String s) {
+    if (s.length() <= 16) {
+      return new UUID(0, parseHex(s));
+    }
+    return new UUID(parseHex(s.substring(0, 16)), parseHex(s.substring(16)));
+  }
+
+  private static String attrToString(final AttributeValue attr) {
     switch (attr.getType()) {
       case LONG:
         return Long.toString(attr.getLongValue());
@@ -60,14 +73,24 @@ public class WavefrontSpanExporter implements SpanExporter {
     }
   }
 
+  private List<Pair<String, String>> attrsToTags(final Map<String, AttributeValue> attrs) {
+    final List<Pair<String, String>> tags = new ArrayList<>(attrs.size() + NUM_STD_TAGS);
+    tags.add(new Pair<>("application", application));
+    tags.add(new Pair<>("service", service));
+    for (final Map.Entry<String, AttributeValue> attr : attrs.entrySet()) {
+      tags.add(new Pair<>(attr.getKey(), attrToString(attr.getValue())));
+    }
+    return tags;
+  }
+
   @Override
-  public ResultCode export(List<SpanData> spans) {
-    for (SpanData span : spans) {
-      System.out.println("******** SPAN: " + span.getName());
-      List<SpanLog> spanLogs = new ArrayList<>(spans.size());
-      for (SpanData.TimedEvent event : span.getTimedEvents()) {
-        Map<String, String> wfAttrs = new HashMap<>(event.getAttributes().size());
-        for (Map.Entry<String, AttributeValue> attr : event.getAttributes().entrySet()) {
+  public ResultCode export(final List<SpanData> spans) {
+    for (final SpanData span : spans) {
+      System.out.println("******** SPAN: " + span.getName() + " clientId: " + sender.getClientId());
+      final List<SpanLog> spanLogs = new ArrayList<>(spans.size());
+      for (final SpanData.TimedEvent event : span.getTimedEvents()) {
+        final Map<String, String> wfAttrs = new HashMap<>(event.getAttributes().size());
+        for (final Map.Entry<String, AttributeValue> attr : event.getAttributes().entrySet()) {
           wfAttrs.put(attr.getKey(), attrToString(attr.getValue()));
         }
         spanLogs.add(new SpanLog(span.getStartEpochNanos() / 1000000, wfAttrs));
@@ -84,8 +107,12 @@ public class WavefrontSpanExporter implements SpanExporter {
             null, // TODO: Populate followsFrom
             attrsToTags(span.getAttributes()),
             spanLogs);
-      } catch (IOException e) {
+        System.out.println("Survived sending spans!");
+      } catch (final IOException e) {
+        e.printStackTrace();
         return ResultCode.FAILED_RETRYABLE;
+      } catch (final Throwable t) {
+        t.printStackTrace();
       }
     }
     return ResultCode.SUCCESS;
@@ -96,95 +123,111 @@ public class WavefrontSpanExporter implements SpanExporter {
     try {
       sender.flush();
       sender.close();
-    } catch (IOException e) {
+    } catch (final IOException e) {
       logger.log(Level.WARNING, "Error closing Wavefront sender", e);
     }
   }
 
   public static class Builder {
+    private String application = "(unknown application)";
+    private String service = "(unknown service)";
     private WavefrontDirectIngestionClient.Builder directBuilder;
-
     private WavefrontProxyClient.Builder proxyBuilder;
 
     public static Builder newBuilder() {
       return new Builder();
     }
 
-    public ProxyClientBuilder proxyClient(String host) {
-      return new ProxyClientBuilder(host);
+    public ProxyClientBuilder proxyClient(final String host) {
+      return new ProxyClientBuilder(host, this);
     }
 
-    public DirectClientBuilder directClient(String wavefrontURL, String token) {
-      return new DirectClientBuilder(wavefrontURL, token);
+    public DirectClientBuilder directClient(final String wavefrontURL, final String token) {
+      return new DirectClientBuilder(wavefrontURL, token, this);
+    }
+
+    public Builder service(final String service) {
+      this.service = service;
+      return this;
+    }
+
+    public Builder application(final String application) {
+      this.application = application;
+      return this;
     }
   }
 
   public static class ProxyClientBuilder {
+    private final Builder parent;
     private WavefrontProxyClient.Builder wfBuilder;
 
-    private ProxyClientBuilder(String host) {
+    private ProxyClientBuilder(final String host, final Builder parent) {
       wfBuilder = new WavefrontProxyClient.Builder(host);
+      this.parent = parent;
     }
 
-    public ProxyClientBuilder metricsPort(int metricsPort) {
+    public ProxyClientBuilder metricsPort(final int metricsPort) {
       wfBuilder = wfBuilder.metricsPort(metricsPort);
       return this;
     }
 
-    public ProxyClientBuilder distributionPort(int distributionPort) {
+    public ProxyClientBuilder distributionPort(final int distributionPort) {
       wfBuilder = wfBuilder.distributionPort(distributionPort);
       return this;
     }
 
-    public ProxyClientBuilder tracingPort(int tracingPort) {
+    public ProxyClientBuilder tracingPort(final int tracingPort) {
       wfBuilder = wfBuilder.tracingPort(tracingPort);
       return this;
     }
 
-    public ProxyClientBuilder socketFactory(SocketFactory socketFactory) {
+    public ProxyClientBuilder socketFactory(final SocketFactory socketFactory) {
       wfBuilder = wfBuilder.socketFactory(socketFactory);
       return this;
     }
 
-    public ProxyClientBuilder flushIntervalSeconds(int flushIntervalSeconds) {
+    public ProxyClientBuilder flushIntervalSeconds(final int flushIntervalSeconds) {
       wfBuilder = wfBuilder.flushIntervalSeconds(flushIntervalSeconds);
       return this;
     }
 
     public WavefrontSpanExporter build() {
-      return new WavefrontSpanExporter(wfBuilder.build());
+      return new WavefrontSpanExporter(wfBuilder.build(), parent.application, parent.service);
     }
   }
 
   public static class DirectClientBuilder {
+    private final Builder parent;
     private WavefrontDirectIngestionClient.Builder wfBuilder;
 
-    private DirectClientBuilder(String wavefrontURL, String token) {
+    private DirectClientBuilder(
+        final String wavefrontURL, final String token, final Builder parent) {
       wfBuilder = new WavefrontDirectIngestionClient.Builder(wavefrontURL, token);
+      this.parent = parent;
     }
 
-    public DirectClientBuilder maxQueueSize(int maxQueueSize) {
+    public DirectClientBuilder maxQueueSize(final int maxQueueSize) {
       wfBuilder = wfBuilder.maxQueueSize(maxQueueSize);
       return this;
     }
 
-    public DirectClientBuilder batchSize(int batchSize) {
+    public DirectClientBuilder batchSize(final int batchSize) {
       wfBuilder = wfBuilder.batchSize(batchSize);
       return this;
     }
 
-    public DirectClientBuilder flushIntervalSeconds(int flushIntervalSeconds) {
+    public DirectClientBuilder flushIntervalSeconds(final int flushIntervalSeconds) {
       wfBuilder = wfBuilder.flushIntervalSeconds(flushIntervalSeconds);
       return this;
     }
 
-    public DirectClientBuilder messageSizeBytes(int bytes) {
+    public DirectClientBuilder messageSizeBytes(final int bytes) {
       wfBuilder = wfBuilder.messageSizeBytes(bytes);
       return this;
     }
 
     public WavefrontSpanExporter build() {
-      return new WavefrontSpanExporter(wfBuilder.build());
+      return new WavefrontSpanExporter(wfBuilder.build(), parent.application, parent.service);
     }
   }
 }

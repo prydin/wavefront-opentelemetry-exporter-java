@@ -11,29 +11,35 @@ public class WavefrontExporterFactory implements ExporterFactory {
   private final String METRICSPORT = "wavefront.metricsport";
   private final String FLUSH_INTERVAL = "wavefront.flushinterval";
   private final String TOKEN = "wavefront.token";
+  private final String APPLICAITION = "application";
+  private final String SERVICE = "service";
 
   @Override
-  public SpanExporter fromConfig(ConfigProvider config) {
+  public SpanExporter fromConfig(final ConfigProvider config) {
     WavefrontSpanExporter.Builder b = WavefrontSpanExporter.Builder.newBuilder();
-    String proxy = config.getString(PROXY, null);
-    String url = config.getString(WAVEFRONT_URL, null);
+    b =
+        b.application(config.getString(APPLICAITION, "(unknown service)"))
+            .service(config.getString(SERVICE, "(unknown application)"));
+
+    final String proxy = config.getString(PROXY, null);
+    final String url = config.getString(WAVEFRONT_URL, null);
     if (proxy != null) {
       if (url != null) {
         throw new IllegalArgumentException(
-            "Settings " + PROXY + " and " + WAVEFRONT_URL + " are mutualy exclusive");
+            "Settings " + PROXY + " and " + WAVEFRONT_URL + " are mutually exclusive");
       }
-      WavefrontSpanExporter.ProxyClientBuilder pb = b.proxyClient(proxy);
+      final WavefrontSpanExporter.ProxyClientBuilder pb = b.proxyClient(proxy);
       pb.metricsPort(config.getInt(METRICSPORT, 2878));
       pb.tracingPort(config.getInt(TRACEPORT, 30000));
       pb.flushIntervalSeconds(config.getInt(FLUSH_INTERVAL, 5));
       return pb.build();
     } else if (url != null) {
-      String token = config.getString(TOKEN, null);
+      final String token = config.getString(TOKEN, null);
       if (token == null) {
         throw new IllegalArgumentException(
             "Setting " + TOKEN + " must be specified for direct connections");
       }
-      WavefrontSpanExporter.DirectClientBuilder db = b.directClient(url, token);
+      final WavefrontSpanExporter.DirectClientBuilder db = b.directClient(url, token);
       db.flushIntervalSeconds(config.getInt(FLUSH_INTERVAL, 5));
       return db.build();
     } else {
