@@ -9,7 +9,7 @@ import io.opentelemetry.sdk.trace.export.SpanExporter;
  * Applications that are programmatically constructing a {@link WavefrontSpanExporter} should use
  * the builder instead.
  */
-public class WavefrontExporterFactory implements ExporterFactory {
+public class WavefrontSpanExporterFactory implements ExporterFactory {
   private final String PROXY = "wavefront.proxy";
   private final String WAVEFRONT_URL = "wavefront.url";
   private final String TRACEPORT = "wavefront.traceport";

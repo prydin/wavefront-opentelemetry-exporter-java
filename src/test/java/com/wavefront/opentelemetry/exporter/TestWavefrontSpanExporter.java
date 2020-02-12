@@ -39,7 +39,7 @@ public class TestWavefrontSpanExporter {
   }
 
   private SpanExporter createDefault(final TestConfig config) {
-    final WavefrontExporterFactory f = new WavefrontExporterFactory();
+    final WavefrontSpanExporterFactory f = new WavefrontSpanExporterFactory();
     return f.fromConfig(config);
   }
 

@@ -9,6 +9,7 @@ import com.wavefront.sdk.proxy.WavefrontProxyClient;
 import io.opentelemetry.sdk.trace.SpanData;
 import io.opentelemetry.sdk.trace.export.SpanExporter;
 import io.opentelemetry.trace.AttributeValue;
+import io.opentelemetry.trace.Status;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -21,7 +22,14 @@ import java.util.logging.Logger;
 import javax.net.SocketFactory;
 
 public class WavefrontSpanExporter implements SpanExporter {
-  private static final int NUM_STD_TAGS = 3;
+  private static final String APPLICATION_TAG = "application";
+  private static final String SERVICE_TAG = "service";
+  private static final String ERROR_TAG = "error";
+  private static final String OTEL_STATUS_TAG = "opentelemetry.status";
+  private static final String INSTRUMENTATION_NAME_TAG = "instrumentation.name";
+  private static final String INSTRUMENTATION_VERSION_TAG = "instrumentation.version";
+
+  private static final int TAGS_HEADROOM = 7;
   private static final Logger logger =
       Logger.getLogger(WavefrontSpanExporter.class.getCanonicalName());
   private final WavefrontSender sender;
@@ -77,20 +85,30 @@ public class WavefrontSpanExporter implements SpanExporter {
 
   private List<Pair<String, String>> extractTags(final SpanData span) {
     final Map<String, AttributeValue> attrs = span.getAttributes();
-    final List<Pair<String, String>> tags = new ArrayList<>(attrs.size() + NUM_STD_TAGS);
-    tags.add(new Pair<>("application", application));
-    tags.add(new Pair<>("service", service));
+    final List<Pair<String, String>> tags = new ArrayList<>(attrs.size() + TAGS_HEADROOM);
+
+    // Add certain standard attributes such as application, service and status
+    tags.add(new Pair<>(APPLICATION_TAG, application));
+    tags.add(new Pair<>(SERVICE_TAG, service));
     final String instLibName = span.getInstrumentationLibraryInfo().name();
     if (instLibName != null) {
-      tags.add(new Pair<>("instrumentaton.name", instLibName));
+      tags.add(new Pair<>(INSTRUMENTATION_NAME_TAG, instLibName));
     }
     final String instLibVer = span.getInstrumentationLibraryInfo().version();
     if (instLibVer != null) {
-      tags.add(new Pair<>("instrumentation.version", instLibVer));
+      tags.add(new Pair<>(INSTRUMENTATION_VERSION_TAG, instLibVer));
     }
 
-    for (final Map.Entry<String, AttributeValue> attr : attrs.entrySet()) {
-      tags.add(new Pair<>(attr.getKey(), attrToString(attr.getValue())));
+    // Handle status code
+    final Status status = span.getStatus();
+    tags.add(new Pair<>(OTEL_STATUS_TAG, status.getCanonicalCode().name()));
+    tags.add(new Pair<>(ERROR_TAG, Boolean.toString(!status.isOk())));
+
+    // Add all normal attributes
+    {
+      for (final Map.Entry<String, AttributeValue> attr : attrs.entrySet()) {
+        tags.add(new Pair<>(attr.getKey(), attrToString(attr.getValue())));
+      }
     }
     return tags;
   }
@@ -99,6 +117,8 @@ public class WavefrontSpanExporter implements SpanExporter {
   public ResultCode export(final List<SpanData> spans) {
     for (final SpanData span : spans) {
       logger.log(Level.FINE, "SPAN: " + span.getName());
+
+      // Convert TimedEvents into span logs
       final List<SpanLog> spanLogs = new ArrayList<>(spans.size());
       for (final SpanData.TimedEvent event : span.getTimedEvents()) {
         final Map<String, String> wfAttrs = new HashMap<>(event.getAttributes().size());
@@ -107,9 +127,15 @@ public class WavefrontSpanExporter implements SpanExporter {
         }
         spanLogs.add(new SpanLog(span.getStartEpochNanos() / 1000000, wfAttrs));
       }
+      // Construct span name from span name and resource name
+      String spanName = span.getName();
+      final AttributeValue resValue = span.getAttributes().get("resource.name");
+      if (resValue != null && resValue.getType() == AttributeValue.Type.STRING) {
+        spanName += "(" + resValue.getStringValue() + ")";
+      }
       try {
         sender.sendSpan(
-            span.getName(),
+            spanName,
             span.getStartEpochNanos() / 1000000,
             (span.getEndEpochNanos() - span.getStartEpochNanos()) / 1000000,
             host,
